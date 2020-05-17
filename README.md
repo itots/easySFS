@@ -1,7 +1,68 @@
-# easySFS
-Effective selection of population size projection for construction of the site frequency spectrum. Convert VCF to dadi/fastsimcoal style SFS for demographic analysis
+# Note
+This script is a fork modified from the 
+[original](https://github.com/isaacovercast/easySFS). 
+The modified script implements the option of 
+bootstrap resampling. 
+Output data can be used for calculating non-parametric bootstrap confidence intervals.
 
+## New options
+```
+-b BOOTSTRAP        Perform bootstrap resampling. Specify # of samples.
+-s SEED             Seed for bootstrap resampling.
+-k BLOCK_SIZE       Block size (# SNPs) for bootstrap resampling.
+-t THREADS          # of threads for parallel bootstrapping.
+```
+
+## Output
+Output files of bootstrap samples are written to /output/bootrep#, 
+while those of original data are to /output/original.
+
+## Example
+```
+./easySFS.py -i example_files/wcs_1200.vcf -p example_files/wcs_pops.txt -a --proj=7,7 -b 1000 -s 123 -k 10 -t -1
+```
+This provides 1000 bootstrap samples with block size of 10 SNPs. 
+If ```-t``` option is specified, resampling is performed in parallel using 
+[Joblib](https://joblib.readthedocs.io/en/latest/) package.
+
+#### pop0 SFS
+```
+                0	1	2	3	4	5	6	7
+original	769.7	223.6	112.7	83.1	0	0	0	0
+bootstrap mean	769.3	223.8	112.8	83.1	0	0	0	0
+bootstrap sd	12.0	5.4	4.5	5.6	0	0	0	0
+```
+![sfs_nuttalli](./images/nuttalli.png)
+
+#### pop1 SFS
+```
+                0	1	2	3	4	5	6	7
+original	760.7	238.8	109.7	79.8	0	0	0	0
+bootstrap mean	760.6	238.8	109.8	79.8	0	0	0	0
+bootstrap sd	11.7	4.7	4.6	5.3	0	0	0	0
+```
+![sfs_pugetensis](./images/pugetensis.png)
+
+Other usage is same with the original.  
+<br>
+<br>
+2020-05-18  
+ITO Tsuyoshi
+
+---
+# easySFS
+TL;DR - easySFS is a tool for the effective selection of population size projection for construction of the site frequency spectrum. It may be used to convert VCF to dadi/fastsimcoal/momi2 style SFS for demographic analysis.
+
+## Why is this needed?
+The site frequency spectrum can not be constructed in a coherent fashion on a data matrix with missing values. Missing data is a prominent feature of RADSeq-like datasets and simply removing sites with missingness would drastically throw out the majority of your data. One could also impute missing values, some people do this, but if you have lots of missing data the imputation will be unreliable. The down projection method is a sort of compromise between these two extremes. You "project down" to a smaller sample size and "average over" all possible resamplings to construct a complete data matrix. To be clear, I didn't invent this down projection strategy, I believe Marth et al 2004 get the credit here, I just made this python program for automating exploration of the projection values.
+
+## Choosing projection values
+In terms of how to choose projection values Gutenkunst et al 2009 provide a heuristic mechanism, suggesting that maximizing the number of segregating sites is the best strategy. Whether this is true or not is an open question at this point, but it's the best we've got, and it's what most people do, if they are being careful. EasySFS simply counts the number of segregating sites per projection value for each population. Then you may choose the projection value based on the results it displays.
+
+## A note on input VCF file format
 This is a relatively simple script. It was created for use with VCF files from RAD-style datasets. VCF file formats differ pretty dramatically so ymmv. Right now it's been tested and seems to run fine for VCF as output by both pyrad/ipyrad and tassel. 
+
+# Installation and operation
 
 ## Dependencies
 The script assumes you have matplotlib and dadi installed.

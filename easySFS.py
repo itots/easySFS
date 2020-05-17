@@ -52,12 +52,13 @@ def dadi_preview_projections(dd, pops, ploidy, fold):
         print("\n")
 
 
-def dadi_oneD_sfs_per_pop(dd, pops, proj, unfold, outdir, prefix, dtype):
+def dadi_oneD_sfs_per_pop(dd, pops, proj, unfold, outdir, prefix, dtype, bootstrap):
     dadi_dir = os.path.join(outdir, "dadi")
     fsc_dir = os.path.join(outdir, "fastsimcoal2")
     M_or_D = "D" if unfold else "M"
     for i, pop in enumerate(pops):
-        print("Doing 1D sfs - {}".format(pop))
+        if bootstrap is None:
+            print("Doing 1D sfs - {}".format(pop))
         dadi_sfs_file = os.path.join(dadi_dir, pop+"-"+str(proj[i])+".sfs")
 
         fs = dadi.Spectrum.from_data_dict(dd, [pop], [proj[i]], mask_corners=True, polarized=unfold)
@@ -80,7 +81,7 @@ def dadi_oneD_sfs_per_pop(dd, pops, proj, unfold, outdir, prefix, dtype):
                 outfile.write("\n")
 
 
-def dadi_twoD_sfs_combinations(dd, pops, proj, unfold, outdir, prefix, dtype, verbose):
+def dadi_twoD_sfs_combinations(dd, pops, proj, unfold, outdir, prefix, dtype, verbose, bootstrap):
     dadi_dir = os.path.join(outdir, "dadi")
     fsc_dir = os.path.join(outdir, "fastsimcoal2")
     M_or_D = "D" if unfold else "M"
@@ -98,7 +99,8 @@ def dadi_twoD_sfs_combinations(dd, pops, proj, unfold, outdir, prefix, dtype, ve
     if verbose: print("Population pairs - {}".format(popPairs))
     if verbose: print("Projections for each pop pair - {}".format(projPairs))
     for i, pair in enumerate(popPairs):
-        print("Doing 2D sfs - {}".format(pair))
+        if bootstrap is None:
+            print("Doing 2D sfs - {}".format(pair))
         dadi_joint_filename = os.path.join(dadi_dir, "-".join(pair)+".sfs")
         fs = dadi.Spectrum.from_data_dict(dd, list(pair), list(projPairs[i]), polarized=unfold)
 
@@ -146,8 +148,9 @@ def dadi_twoD_sfs_combinations(dd, pops, proj, unfold, outdir, prefix, dtype, ve
                     outfile.write(row_head + "\t" + " ".join(rows[i]) + "\n")
 
 
-def dadi_multiSFS(dd, pops, proj, unfold, outdir, prefix, dtype):
-    print("Doing multiSFS for all pops")
+def dadi_multiSFS(dd, pops, proj, unfold, outdir, prefix, dtype, bootstrap):
+    if bootstrap is None:
+        print("Doing multiSFS for all pops")
     dadi_dir = os.path.join(outdir, "dadi")
     fsc_dir = os.path.join(outdir, "fastsimcoal2")
     dadi_multi_filename = os.path.join(dadi_dir, "-".join(pops)+".sfs")
@@ -281,7 +284,7 @@ def make_datadict(genotypes, pops, verbose=False, ploidy=1):
     dd = {}
 
     ## Get genotype counts for each population
-    for row in genotypes.iterrows():
+    for (i, row) in enumerate(genotypes.iterrows()):  # Avoid duplicate rows removal in bootstrap data
         ## iterrows() returns a tuple for some reason
         row = row[1]
 
@@ -299,7 +302,7 @@ def make_datadict(genotypes, pops, verbose=False, ploidy=1):
             alt_count += het_count
             calls[pop] = (ref_count, alt_count)
 
-        dd[row["#CHROM"]+"-"+row["POS"]] =\
+        dd[row["#CHROM"]+"-"+row["POS"]+"-"+str(i)] =\
             {"segregating":[row["REF"], row["ALT"]],\
             "calls":calls,\
             "outgroup_allele":row["REF"]}
@@ -441,9 +444,9 @@ def check_inputs(ind2pop, indnames, pops):
                 print("Empty population, removing - {}".format(k))
                 pops.pop(k)
 
-        cont = raw_input("\nContinue, excluding samples not in both pops file and VCF? (yes/no)\n")
+        cont = input("\nContinue, excluding samples not in both pops file and VCF? (yes/no)\n")  # Python 3 uses input not raw_input
         while not cont in ["yes", "no"]:
-            cont = raw_input("\nContinue, excluding samples not in both pops file and VCF? (yes/no)\n")
+            cont = input("\nContinue, excluding samples not in both pops file and VCF? (yes/no)\n")  # Python 3 uses input not raw_input
         if cont == "no":
             sys.exit()
     return ind2pop, indnames, pops
@@ -542,6 +545,18 @@ def parse_command_line():
     parser.add_argument("-v", dest="verbose", action='store_true',
         help="Set verbosity. Dump tons of info to the screen")
 
+    parser.add_argument("-b", dest="bootstrap", type=int, default=None,
+                        help="Perform bootstrap resampling. Specify # of samples.")
+
+    parser.add_argument("-s", dest="seed", type=int, default=None,
+                        help="Seed for bootstrap resampling.")
+
+    parser.add_argument("-k", dest="block_size", type=int, default=None,
+                        help="Block size (# SNPs) for bootstrap resampling.")
+
+    parser.add_argument("-t", dest="threads", type=int, default=None,
+                        help="# of threads for parallel bootstrapping.")
+
     ## if no args then return help message
     if len(sys.argv) == 1:
         parser.print_help()
@@ -550,6 +565,7 @@ def parse_command_line():
     ## parse args
     args = parser.parse_args()
     return args
+
 
 def init(args):
     ## Set up output directory and output prefix
@@ -560,8 +576,6 @@ def init(args):
     if os.path.exists(outdir):
         shutil.rmtree(outdir)
     os.mkdir(outdir)
-    os.mkdir(os.path.join(outdir, "dadi"))
-    os.mkdir(os.path.join(outdir, "fastsimcoal2"))
 
     if not args.prefix:
         prefix = args.vcf_name.split('/')[-1].split('.')[0]
@@ -571,6 +585,71 @@ def init(args):
         print("Prefix - {}".format(prefix))
 
     return outdir, prefix
+
+
+def create_sfs(outdir, prefix, genotypes, pops, args):
+    ## Make sub-directories
+    os.mkdir(os.path.join(outdir, "dadi"))
+    os.mkdir(os.path.join(outdir, "fastsimcoal2"))
+
+    ## Convert dataframe to dadi-style datadict
+    dd = make_datadict(genotypes, pops=pops, ploidy=args.ploidy, verbose=args.verbose)
+    with open(os.path.join(outdir, "datadict.txt"), 'w') as outfile:
+        for x,y in dd.items():
+            outfile.write(x+str(y)+"\n")
+
+    ## Validate values passed in for projecting
+    proj = [int(x) for x in args.projections.split(",")]
+    if not len(pops) == len(proj):
+
+        msg = "You must pass in the same number of values for projection as you have populations specified"
+        msg += "\n\nN pops = {}\nN projections = {}\nProjections = {}".format(len(pops), len(proj), proj)
+        sys.exit(msg)
+
+    ## Create 1D sfs for each population
+    dadi_oneD_sfs_per_pop(dd, pops, proj=proj, unfold=args.unfolded, outdir=outdir, prefix=prefix, dtype=args.dtype,
+                          bootstrap=args.bootstrap)
+
+    ## Create pairwise 2D sfs for each population
+    dadi_twoD_sfs_combinations(dd, pops, proj=proj, unfold=args.unfolded,\
+                            outdir=outdir, prefix=prefix, dtype=args.dtype, verbose=args.verbose,
+                               bootstrap=args.bootstrap)
+
+    ## Create the full multiSFS for all popuations combined
+    sfs_file = dadi_multiSFS(dd, pops, proj=proj, unfold=args.unfolded, outdir=outdir, prefix=prefix, dtype=args.dtype,
+                             bootstrap=args.bootstrap)
+
+    try:
+        import momi
+        ## Create momi-style sfs
+        dadi_to_momi(infile=sfs_file, outdir=outdir, verbose=args.verbose)
+    except:
+        ## Can't create momi file at this point because we're locked to python2
+        ## because of dadi.
+        pass
+
+
+def bootstrap_resampling(rep, genotypes, block_index, outdir, prefix, pops, args):
+
+    ## Seed was specified to guarantee reproducibility.
+    if args.seed is not None:
+        seed = args.seed + rep
+    else:
+        np.random.seed()
+        seed = np.random.RandomState()
+
+    ## Resampling for SNPs
+    if args.block_size is None:
+        resampled = genotypes.sample(frac=1, replace=True, random_state=seed)
+    ## Resampling for non-overlapping blocks (Block bootstrapping)
+    else:
+        resampled_index = genotypes.assign(block_index=block_index)[["#CHROM", "block_index"]].\
+            drop_duplicates().sample(frac=1, replace=True, random_state=seed)
+        resampled = genotypes.assign(block_index=block_index).\
+            merge(resampled_index, how="inner", on=["#CHROM", "block_index"]).drop(columns="block_index")
+
+    os.mkdir(os.path.join(outdir, "bootrep" + str(rep)))
+    create_sfs(os.path.join(outdir, "bootrep" + str(rep)), prefix, resampled, pops, args)
 
 
 def main():
@@ -604,12 +683,7 @@ def main():
 
     ## Convert dataframe to dadi-style datadict
     dd = make_datadict(genotypes, pops=pops, ploidy=args.ploidy, verbose=args.verbose)
-    ## Don't write the datadict to the file for preview mode
-    if not args.preview:
-        with open(os.path.join(args.outdir, "datadict.txt"), 'w') as outfile:
-            for x,y in dd.items():
-                outfile.write(x+str(y)+"\n")
-    
+
     ## Do preview of various projections to determine good values
     if args.preview:
         dadi_preview_projections(dd, pops, ploidy=args.ploidy, fold=args.unfolded)
@@ -624,27 +698,59 @@ def main():
             msg += "\n\nN pops = {}\nN projections = {}\nProjections = {}".format(len(pops), len(proj), proj)
             sys.exit(msg)
 
-        ## Create 1D sfs for each population
-        dadi_oneD_sfs_per_pop(dd, pops, proj=proj, unfold=args.unfolded, outdir=outdir, prefix=prefix, dtype=args.dtype)
+        ## Bootstrap resampling
+        if args.bootstrap is not None:
+            print("Start bootstrap resmpling")
+            os.mkdir(os.path.join(outdir, "original"))
+            create_sfs(os.path.join(outdir, "original"), prefix, genotypes, pops, args)
 
-        ## Create pairwise 2D sfs for each population
-        dadi_twoD_sfs_combinations(dd, pops, proj=proj, unfold=args.unfolded,\
-                                outdir=outdir, prefix=prefix, dtype=args.dtype, verbose=args.verbose)
+            if args.block_size is None:
+                print("Resampling SNPs")
+                block_index = None
+            elif args.block_size < 0:
+                msg = "Block size (-k) must be specified as positive value."
+                sys.exit(msg)
+            else:
+                print("Resampling non-overlapping blocks (block bootstrapping)")
+                ## Assign block index
+                chrom_pos = genotypes.loc[:, ("#CHROM", "POS")].copy()
+                chrom_pos.POS = chrom_pos.POS.astype(int)  # Change type for block indexing
+                if len(set(chrom_pos["#CHROM"])) == 1:
+                    chrom_pos["block_index"] = [i for i in range(len(chrom_pos) // args.block_size) for _ in range(args.block_size)] + \
+                                               [len(chrom_pos) // args.block_size] * (len(chrom_pos) % args.block_size)
+                ## Block is set separately for each chromosome
+                else:
+                    chrom_pos["block_index"] = chrom_pos.iloc[:, :2].groupby("#CHROM").transform(
+                            lambda x: [i for i in range(x.shape[0] // args.block_size) for _ in range(args.block_size)] +
+                                      [x.shape[0] // args.block_size] * (x.shape[0] % args.block_size))
+                print("  Number of chromosomes: " + str(len(set(chrom_pos["#CHROM"]))))
+                print("  Number of blocks: " + str(chrom_pos[["#CHROM", "block_index"]].drop_duplicates().shape[0]))
+                print("  Block size (# SNPs): " + str(args.block_size))
+                block_index = chrom_pos["block_index"]
 
-        ## Create the full multiSFS for all popuations combined
-        sfs_file = dadi_multiSFS(dd, pops, proj=proj, unfold=args.unfolded, outdir=outdir, prefix=prefix, dtype=args.dtype)
+            ## Parallelize bootstrap resampling
+            if args.threads is not None:
+                print("Bootstrapping in parallel...")
+                from joblib import Parallel, delayed
+                Parallel(n_jobs=-1, verbose=5)([
+                    delayed(bootstrap_resampling)(rep=i, genotypes=genotypes, block_index=block_index,
+                                                  outdir=outdir, prefix=prefix, pops=pops, args=args)
+                    for i in range(args.bootstrap)])
+            else:
+                print("Bootstrapping serially...")
+                for i in range(args.bootstrap):
+                    print("# bootrep " + str(i))
+                    bootstrap_resampling(rep=i, genotypes=genotypes, block_index=block_index,
+                                         outdir=outdir, prefix=prefix, pops=pops, args=args)
+            print("Done.")
 
-        try:
-            import momi
-            ## Create momi-style sfs
-            dadi_to_momi(infile=sfs_file, outdir=outdir, verbose=args.verbose)
-        except:
-            ## Can't create momi file at this point because we're locked to python2 
-            ## because of dadi. 
-            pass
+        ## Original data
+        else:
+            create_sfs(outdir, prefix, genotypes, pops, args)
 
     else:
         print("Either --preview or --proj must be specified.")
+
 
 if __name__ == "__main__":
     main()
