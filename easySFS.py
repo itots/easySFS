@@ -548,9 +548,6 @@ def parse_command_line():
     parser.add_argument("-b", dest="bootstrap", type=int, default=None,
                         help="Perform bootstrap resampling. Specify # of samples.")
 
-    parser.add_argument("-s", dest="seed", type=int, default=None,
-                        help="Seed for bootstrap resampling.")
-
     parser.add_argument("-k", dest="block_size", type=int, default=None,
                         help="Block size (# SNPs) for bootstrap resampling.")
 
@@ -631,24 +628,20 @@ def create_sfs(outdir, prefix, genotypes, pops, args):
 
 def bootstrap_resampling(rep, genotypes, block_index, outdir, prefix, pops, args):
 
-    ## Seed was specified to guarantee reproducibility.
-    if args.seed is not None:
-        seed = args.seed + rep
-    else:
-        np.random.seed()
-        seed = np.random.RandomState()
-
     ## Resampling for SNPs
     if args.block_size is None:
-        resampled = genotypes.sample(frac=1, replace=True, random_state=seed)
+        resampled = genotypes.sample(frac=1, replace=True, random_state=np.random.RandomState())
     ## Resampling for non-overlapping blocks (Block bootstrapping)
     else:
         resampled_index = genotypes.assign(block_index=block_index)[["#CHROM", "block_index"]].\
-            drop_duplicates().sample(frac=1, replace=True, random_state=seed)
+            drop_duplicates().sample(frac=1, replace=True, random_state=np.random.RandomState())
         resampled = genotypes.assign(block_index=block_index).\
             merge(resampled_index, how="inner", on=["#CHROM", "block_index"]).drop(columns="block_index")
 
+    # Make directory
     os.mkdir(os.path.join(outdir, "bootrep" + str(rep)))
+
+    # Create SFS
     create_sfs(os.path.join(outdir, "bootrep" + str(rep)), prefix, resampled, pops, args)
 
 

@@ -48,8 +48,10 @@ Other usage is same with the original.
 <br>
 2020-05-18  
 ITO Tsuyoshi
-
 ---
+<br>
+<br>
+
 # easySFS
 TL;DR - easySFS is a tool for the effective selection of population size projection for construction of the site frequency spectrum. It may be used to convert VCF to dadi/fastsimcoal/momi2 style SFS for demographic analysis.
 
